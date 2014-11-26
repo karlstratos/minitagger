@@ -4,12 +4,14 @@ This module contains the code to train and use Minitagger.
 """
 import argparse
 import collections
+import datetime
 import math
 import numpy
 import os
 import pickle
 import subprocess
 import sys
+import time
 
 # Specify where to find liblinear.
 liblinear_path = os.path.join(os.path.dirname(__file__),
@@ -453,6 +455,7 @@ class Minitagger():
 
     def train(self, data_train):
         """Trains Minitagger on the given data."""
+        start_time = time.time()
         assert self.__feature_extractor.is_training  # Assert untrained
 
         # Extract features and pass them to liblinear.
@@ -473,6 +476,11 @@ class Minitagger():
             liblinearutil.train(problem, liblinearutil.parameter("-q"))
         self.__feature_extractor.is_training = False
 
+        if not self.quiet:
+            num_seconds = int(math.ceil(time.time() - start_time))
+            print("Training time: {0}".format(
+                    str(datetime.timedelta(seconds=num_seconds))))
+
     def save(self, model_path):
         if not os.path.isdir(model_path):
             if os.path.exists(model_path):
@@ -491,6 +499,7 @@ class Minitagger():
             os.path.join(model_path, "liblinear_model"))
 
     def predict(self, data_test):
+        start_time = time.time()
         assert not self.__feature_extractor.is_training  # Assert trained
 
         # Extract features and pass them to liblinear for prediction.
@@ -500,6 +509,9 @@ class Minitagger():
             liblinearutil.predict(label_list, features_list,
                                   self.__liblinear_model, "-q")
         if not self.quiet:
+            num_seconds = int(math.ceil(time.time() - start_time))
+            print("Prediction time: {0}".format(
+                    str(datetime.timedelta(seconds=num_seconds))))
             print("Per-instance accuracy: {0:.3f}%".format(acc))
         return pred_labels, acc
 
