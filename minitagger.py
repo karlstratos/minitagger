@@ -15,7 +15,7 @@ import time
 
 # Specify where to find liblinear.
 liblinear_path = os.path.join(os.path.dirname(__file__),
-                              "liblinear-1.94/python")
+                              "liblinear-1.96/python")
 sys.path.append(os.path.abspath(liblinear_path))
 import liblinearutil
 
