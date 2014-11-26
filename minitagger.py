@@ -28,6 +28,7 @@ class SequenceData(object):
         self.data_path = None
         self.sequence_pairs = []
         self.num_instances = 0
+        self.num_labeled_instances = 0
         self.observation_count = collections.Counter()
         self.label_count = collections.Counter()
         self.observation_label_count = {}  # "set" => {"verb":10, "noun":8}
@@ -98,6 +99,7 @@ class SequenceData(object):
 
                 label = label_sequence[i]
                 if label is not None:
+                    self.num_labeled_instances += 1
                     self.label_count[label] += 1
                     if not observation in self.observation_label_count:
                         self.observation_label_count[observation] = \
@@ -273,9 +275,9 @@ def get_bitstring_features(word_sequence, position, bitstring_dictionary):
         word_bitstring = bitstring_dictionary[word]
     else:
         word_bitstring = bitstring_dictionary[UNKNOWN_SYMBOL]
-    for i in len(word_bitstring):
+    for i in range(1, len(word_bitstring) + 1):
         features["bitstring(0)_prefix({0})={1}".format(
-                i + 1, word_bitstring[:i])] = 1
+                i, word_bitstring[:i])] = 1
     features["bitstring(0)_all={0}".format(word_bitstring)] = 1
 
     if position > 0:
@@ -284,9 +286,9 @@ def get_bitstring_features(word_sequence, position, bitstring_dictionary):
             word_bitstring = bitstring_dictionary[word]
         else:
             word_bitstring = bitstring_dictionary[UNKNOWN_SYMBOL]
-        for i in len(word_bitstring):
+        for i in range(1, len(word_bitstring) + 1):
             features["bitstring(-1)_prefix({0})={1}".format(
-                    i + 1, word_bitstring[:i])] = 1
+                    i, word_bitstring[:i])] = 1
         features["bitstring(-1)_all={0}".format(word_bitstring)] = 1
 
     if position < len(word_sequence) - 1:
@@ -295,9 +297,9 @@ def get_bitstring_features(word_sequence, position, bitstring_dictionary):
             word_bitstring = bitstring_dictionary[word]
         else:
             word_bitstring = bitstring_dictionary[UNKNOWN_SYMBOL]
-        for i in len(word_bitstring):
+        for i in range(1, len(word_bitstring) + 1):
             features["bitstring(+1)_prefix({0})={1}".format(
-                    i + 1, word_bitstring[:i])] = 1
+                    i, word_bitstring[:i])] = 1
         features["bitstring(+1)_all={0}".format(word_bitstring)] = 1
 
     return features
@@ -316,6 +318,9 @@ class SequenceDataFeatureExtractor():
         self.__map_label_num2str = {}
         self.__word_embedding = None
         self.__word_bitstring = None
+
+    def num_feature_types(self):
+        return len(self.__map_feature_str2num)
 
     def get_feature_string(self, feature_number):
         assert feature_number in self.__map_feature_num2str
@@ -374,9 +379,11 @@ class SequenceDataFeatureExtractor():
         if self.feature_template == "baseline":
             raw_features = get_baseline_features(observation_sequence, i)
         elif self.feature_template == "embedding":
+            assert self.__word_embedding is not None
             raw_features = get_embedding_features(observation_sequence, i,
                                                   self.__word_embedding)
         elif self.feature_template == "bitstring":
+            assert self.__word_bitstring is not None
             raw_features = get_bitstring_features(observation_sequence, i,
                                                   self.__word_bitstring)
         else:
@@ -439,6 +446,7 @@ class Minitagger():
     def __init__(self):
         self.__feature_extractor = None
         self.__liblinear_model = None
+        self.quiet = False
 
     def equip_feature_extractor(self, feature_extractor):
         self.__feature_extractor = feature_extractor
@@ -450,6 +458,16 @@ class Minitagger():
         # Extract features and pass them to liblinear.
         [label_list, features_list] = \
             self.__feature_extractor.extract_features(data_train)
+        if not self.quiet:
+            print("{0} labeled instances (out of {1})".format(
+                    data_train.num_labeled_instances, data_train.num_instances))
+            print("{0} label types".format(len(data_train.label_count)))
+            print("{0} observation types".format(
+                    len(data_train.observation_count)))
+            print("\"{0}\" feature template".format(
+                    self.__feature_extractor.feature_template))
+            print("{0} feature types".format(
+                    self.__feature_extractor.num_feature_types()))
         problem = liblinearutil.problem(label_list, features_list)
         self.__liblinear_model = \
             liblinearutil.train(problem, liblinearutil.parameter("-q"))
@@ -481,16 +499,19 @@ class Minitagger():
         pred_labels, (acc, _, _), _ = \
             liblinearutil.predict(label_list, features_list,
                                   self.__liblinear_model, "-q")
+        if not self.quiet:
+            print("Per-instance accuracy: {0:.3f}%".format(acc))
         return pred_labels, acc
 
 ######################## script for command line usage  ########################
 def main(args):
     """Runs the main function."""
+    minitagger = Minitagger()
+    minitagger.quiet = args.quiet
     sequence_data = SequenceData(args.data_path)  # Given data
 
     if args.train:
         # Train on that data.
-        minitagger = Minitagger()
         feature_extractor = SequenceDataFeatureExtractor(args.feature_template)
         if args.embedding_path:
             feature_extractor.load_word_embeddings(args.embedding_path)
@@ -505,7 +526,6 @@ def main(args):
         minitagger = Minitagger()
         minitagger.load(args.model_path)
         pred_labels, acc = minitagger.predict(sequence_data)
-        print(acc)
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
@@ -522,5 +542,6 @@ if __name__ == "__main__":
                            "embeddings")
     argparser.add_argument("--bitstring_path", type=str, help="path to word "
                            "bit strings (from a hierarchy of word types)")
+    argparser.add_argument("--quiet", action="store_true", help="no messages")
     parsed_args = argparser.parse_args()
     main(parsed_args)

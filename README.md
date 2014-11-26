@@ -1,3 +1,3 @@
-# Mini tagger
+# Minitagger
 
 ###### Under construction
