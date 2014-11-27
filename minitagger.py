@@ -361,7 +361,7 @@ class SequenceDataFeatureExtractor():
         if self.is_training:
             # If training, add unknown label types to the dictionary.
             if not label in self.__map_label_str2num:
-                label_number = len(self.__map_label_str2num)
+                label_number = len(self.__map_label_str2num) + 1  # index from 1
                 self.__map_label_str2num[label] = label_number
                 self.__map_label_num2str[label_number] = label
             return self.__map_label_str2num[label]
@@ -370,7 +370,7 @@ class SequenceDataFeatureExtractor():
             if label in self.__map_label_str2num:
                 return self.__map_label_str2num[label]
             else:
-                return len(self.__map_label_str2num)  # Unknown label
+                return -1 # Unknown label
 
     def __get_features(self, observation_sequence, i):
         """
@@ -398,7 +398,8 @@ class SequenceDataFeatureExtractor():
             if self.is_training:
                 # If training, add unknown feature types to the dictionary.
                 if not raw_feature in self.__map_feature_str2num:
-                    feature_number = len(self.__map_feature_str2num)
+                    # Note: Feature index has to starts from 1 in liblinear.
+                    feature_number = len(self.__map_feature_str2num) + 1
                     self.__map_feature_str2num[raw_feature] = feature_number
                     self.__map_feature_num2str[feature_number] = raw_feature
                 numeric_features[self.__map_feature_str2num[raw_feature]] = \
