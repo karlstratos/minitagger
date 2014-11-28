@@ -114,13 +114,9 @@ class SequenceData(object):
                 key=lambda pair: pair[1], reverse=True)
 
 ############################# code about features ##############################
-FRONT_BUFFER_SYMBOL = "_START_"
-END_BUFFER_SYMBOL = "_END_"
-UNKNOWN_SYMBOL = "<?>"
-
-def merge_dicts(*dicts):
-    """Merges the given dictionaries into one."""
-    return dict(chain(*[d.iteritems() for d in dicts]))
+FRONT_BUFFER_SYMBOL = "_START_"  # For sentence boundaries
+END_BUFFER_SYMBOL = "_END_"  # For sentence boundaries
+UNKNOWN_SYMBOL = "<?>"   # For unknown observation types at test time
 
 def get_word(word_sequence, position):
     """Gets the word at the specified position."""
@@ -173,22 +169,17 @@ def is_float(word):
 # FEATURE_CACHE[(word, relative_position)] stores the features extracted for the
 # word at the relative position so that the features can be immediate retrieved
 # if requested again.
-global FEATURE_CACHE
-FEATURE_CACHE = {}
-
-def clear_feature_cache():
-    """Clears the global feature cache."""
-    global FEATURE_CACHE
-    FEATURE_CACHE = {}
+global SPELLING_FEATURE_CACHE
+SPELLING_FEATURE_CACHE = {}
 
 def spelling_features(word, relative_position):
     """
     Extracts spelling features about the given word. Also considers the word's
     relative position.
     """
-    if not (word, relative_position) in FEATURE_CACHE:
+    if not (word, relative_position) in SPELLING_FEATURE_CACHE:
         features = {}
-        features["word(0)={1}".format(relative_position, word)] = 1
+        features["word({0})={1}".format(relative_position, word)] = 1
         features['is_capitalized({0})={1}'.format(
                 relative_position, is_capitalized(word))] = 1
         for length in range(1, 5):
@@ -200,10 +191,10 @@ def spelling_features(word, relative_position):
                 relative_position, is_all_nonalphanumeric(word))] = 1
         features["is_float({0})={1}".format(
                 relative_position, is_float(word))] = 1
-        FEATURE_CACHE[(word, relative_position)] = features
+        SPELLING_FEATURE_CACHE[(word, relative_position)] = features
 
     # Return a copy so that modifying that object doesn't modify the cache.
-    return FEATURE_CACHE[(word, relative_position)].copy()
+    return SPELLING_FEATURE_CACHE[(word, relative_position)].copy()
 
 def get_baseline_features(word_sequence, position):
     """
@@ -220,7 +211,7 @@ def get_baseline_features(word_sequence, position):
     features["word(-1)={0}".format(word_left1)] = 1
     features["word(-2)={0}".format(word_left2)] = 1
     features["word(+1)={0}".format(word_right1)] = 1
-    features["word(+2)={0}".format(word_right1)] = 1
+    features["word(+2)={0}".format(word_right2)] = 1
     return features
 
 def get_embedding_features(word_sequence, position, embedding_dictionary):
@@ -536,7 +527,6 @@ def main(args):
 
     else:
         # Predict tags in that data.
-        minitagger = Minitagger()
         minitagger.load(args.model_path)
         pred_labels, acc = minitagger.predict(sequence_data)
 
