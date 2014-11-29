@@ -9,6 +9,7 @@ import math
 import numpy
 import os
 import pickle
+import random
 import subprocess
 import sys
 import time
@@ -34,6 +35,7 @@ class SequenceData(object):
         self.observation_count = collections.Counter()
         self.label_count = collections.Counter()
         self.observation_label_count = {}  # "set" => {"verb":10, "noun":8}
+        self.is_partially_labeled = False
 
         if isinstance(given_data, str):
             self.__initialize_sequence_pairs_from_file(given_data)
@@ -43,6 +45,12 @@ class SequenceData(object):
             raise Exception("A sequence data can be constructed from either a "
                             "string (file path) or a list")
         self.__initialize_attributes()
+
+    def get_average_length(self):
+        length_sum = 0
+        for observation_sequence, _ in self.sequence_pairs:
+            length_sum += len(observation_sequence)
+        return float(length_sum) / len(self.sequence_pairs)
 
     def __initialize_sequence_pairs_from_file(self, data_path):
         """
@@ -54,26 +62,26 @@ class SequenceData(object):
         with open(data_path, "r") as infile:
             observation_sequence = []
             label_sequence = []
-            def append_pair():
-                """Appends the current sequence pair to self.sequence_pairs."""
-                self.sequence_pairs.append([observation_sequence,
-                                            label_sequence])
             for line in infile:
                 toks = line.split()
                 assert len(toks) < 3
                 if toks:
                     observation = toks[0]
                     label = None if len(toks) == 1 else toks[1]
+                    if label is None:
+                        self.is_partially_labeled = True
                     observation_sequence.append(observation)
                     label_sequence.append(label)
                 else:
                     if observation_sequence:
-                        append_pair()
+                        self.sequence_pairs.append([observation_sequence,
+                                                    label_sequence])
                         observation_sequence = []
                         label_sequence = []
 
             if observation_sequence:
-                append_pair()
+                self.sequence_pairs.append([observation_sequence,
+                                            label_sequence])
 
     def __initialize_sequence_pairs_from_list(self, sequence_list):
         """
@@ -112,6 +120,102 @@ class SequenceData(object):
             self.observation_label_count[observation] = sorted(
                 self.observation_label_count[observation].items(),
                 key=lambda pair: pair[1], reverse=True)
+
+    def __str__(self):
+        """String representation of sequence pairs"""
+        string_rep = ""
+        for sequence_num, (observation_sequence, label_sequence) in \
+                enumerate(self.sequence_pairs):
+            for position in range(len(observation_sequence)):
+                string_rep += observation_sequence[position]
+                if not label_sequence[position] is None:
+                    string_rep += "\t" + label_sequence[position]
+                string_rep += "\n"
+            if sequence_num < len(self.sequence_pairs) - 1:
+                string_rep += "\n"
+        return string_rep
+
+def analyze_data(data_path):
+    """Analyzes the given data file."""
+
+    # Establish whether this data is a prediction file or not.
+    is_prediction = False
+    is_not_prediction = False
+    with open(data_path, "r") as infile:
+        for line in infile:
+            toks = line.split()
+            if toks:
+                assert len(toks) < 4
+                if len(toks) < 3:
+                    is_not_prediction = True
+                else:
+                    is_prediction = True
+
+    assert is_prediction or is_not_prediction and \
+        not (is_prediction and is_not_prediction)
+
+    # If prediction, recover the original data and also compute accuracy.
+    sequence_pairs = []
+    per_instance_accuracy = -1
+    per_sequence_accuracy = -1
+    if is_prediction:
+        num_labels = 0
+        num_sequences = 0
+        num_correct_labels = 0
+        num_correct_sequences = 0
+        with open(data_path, "r") as infile:
+            observation_sequence = []
+            gold_label_sequence = []
+            pred_label_sequence = []
+            for line in infile:
+                toks = line.split()
+                if toks:
+                    num_labels += 1
+                    observation = toks[0]
+                    gold_label = toks[1]
+                    pred_label = toks[2]
+                    if pred_label == gold_label:
+                        num_correct_labels += 1
+                    observation_sequence.append(observation)
+                    gold_label_sequence.append(gold_label)
+                    pred_label_sequence.append(pred_label)
+                else:
+                    num_sequences += 1
+                    if observation_sequence:
+                        sequence_pairs.append([observation_sequence,
+                                               gold_label_sequence])
+                    if pred_label_sequence == gold_label_sequence:
+                        num_correct_sequences += 1
+                    observation_sequence = []
+                    gold_label_sequence = []
+                    pred_label_sequence = []
+            if observation_sequence:
+                num_sequences += 1
+                sequence_pairs.append([observation_sequence,
+                                       gold_label_sequence])
+                if pred_label_sequence is gold_label_sequence:
+                    num_correct_sequences += 1
+        per_instance_accuracy = float(num_correct_labels) / num_labels * 100
+        per_sequence_accuracy = float(num_correct_sequences) / num_sequences \
+            * 100
+
+    # Construct sequence data.
+    data = SequenceData(sequence_pairs) if is_prediction \
+        else SequenceData(data_path)
+
+    if is_prediction:
+        print("A prediction data file:", data_path)
+    else:
+        print("A non-prediction data file:", data_path)
+    print("{0} sequences (average length: {1:.1f})".format(
+            len(data.sequence_pairs), data.get_average_length()))
+    print("{0} instances".format(data.num_instances))
+    print("{0} labeled instances".format(data.num_labeled_instances))
+    print("{0} observation types".format(len(data.observation_count)))
+    print("{0} label types".format(len(data.label_count)))
+    if is_prediction:
+        print("Per-instance accuracy: {0:.3f}%".format(per_instance_accuracy))
+        print("Per-sequence accuracy: {0:.3f}%".format(per_sequence_accuracy))
 
 ############################# code about features ##############################
 FRONT_BUFFER_SYMBOL = "_START_"  # For sentence boundaries
@@ -171,6 +275,11 @@ def is_float(word):
 # if requested again.
 global SPELLING_FEATURE_CACHE
 SPELLING_FEATURE_CACHE = {}
+
+def clear_spelling_feature_cache():
+    """Clears the global spelling feature cache."""
+    global SPELLING_FEATURE_CACHE
+    SPELLING_FEATURE_CACHE = {}
 
 def spelling_features(word, relative_position):
     """
@@ -301,7 +410,7 @@ class SequenceDataFeatureExtractor():
     """Extracts features from sequence data."""
 
     def __init__(self, feature_template):
-        clear_feature_cache()
+        clear_spelling_feature_cache()
         self.feature_template = feature_template
         self.data_path = None
         self.is_training = True
@@ -331,21 +440,36 @@ class SequenceDataFeatureExtractor():
         assert label_string in self.__map_label_str2num
         return self.__map_label_str2num[label_string]
 
-    def extract_features(self, sequence_data):
-        """Extracts features from the given sequence data."""
+    def extract_features(self, sequence_data, extract_all, skip_list=[]):
+        """
+        Extracts features from the given sequence data. Also returns the
+        sequence-position indices of the extracted instances. Unless specified
+        extract_all=True, it extracts features only from labeled instances.
+
+        Optional: It can skip extracting features from specified examples.
+        This is used for active learning.
+        """
         label_list = []
         features_list = []
+        location_list = []
 
         self.data_path = sequence_data.data_path
-        for (observation_sequence, label_sequence) in \
-                sequence_data.sequence_pairs:
-            for i in range(len(observation_sequence)):
-                if label_sequence[i] is not None:  # Only use labeled instances.
-                    label_list.append(self.__get_label(label_sequence[i]))
-                    features_list.append(
-                        self.__get_features(observation_sequence, i))
+        for sequence_num, (observation_sequence, label_sequence) in \
+                enumerate(sequence_data.sequence_pairs):
+            for position, label in enumerate(label_sequence):
 
-        return label_list, features_list
+                # If this example is in the skip list, ignore.
+                if skip_list and skip_list[sequence_num][position]:
+                    continue
+
+                # Only use labeled instances unless extract_all=True.
+                if (not label is None) or extract_all:
+                    label_list.append(self.__get_label(label))
+                    features_list.append(
+                        self.__get_features(observation_sequence, position))
+                    location_list.append((sequence_num, position))
+
+        return label_list, features_list, location_list
 
     def __get_label(self, label):
         """Returns the integer ID of the given label."""
@@ -363,21 +487,21 @@ class SequenceDataFeatureExtractor():
             else:
                 return -1 # Unknown label
 
-    def __get_features(self, observation_sequence, i):
+    def __get_features(self, observation_sequence, position):
         """
-        Returns the integer IDs of the extracted features for the i-th
-        position of the given observation sequence.
+        Returns the integer IDs of the extracted features for observation at the
+        given position in the sequence.
         """
         # Extract raw features.
         if self.feature_template == "baseline":
-            raw_features = get_baseline_features(observation_sequence, i)
+            raw_features = get_baseline_features(observation_sequence, position)
         elif self.feature_template == "embedding":
             assert self.__word_embedding is not None
-            raw_features = get_embedding_features(observation_sequence, i,
+            raw_features = get_embedding_features(observation_sequence, position,
                                                   self.__word_embedding)
         elif self.feature_template == "bitstring":
             assert self.__word_bitstring is not None
-            raw_features = get_bitstring_features(observation_sequence, i,
+            raw_features = get_bitstring_features(observation_sequence, position,
                                                   self.__word_bitstring)
         else:
             raise Exception("Unsupported feature template {0}".format(
@@ -441,21 +565,25 @@ class Minitagger():
         self.__feature_extractor = None
         self.__liblinear_model = None
         self.quiet = False
+        self.active_output_path = ""
+        self.active_seed_size = 0
+        self.active_step_size = 0
+        self.active_output_interval = 0
 
     def equip_feature_extractor(self, feature_extractor):
         self.__feature_extractor = feature_extractor
 
-    def train(self, data_train):
+    def train(self, data_train, data_dev):
         """Trains Minitagger on the given data."""
         start_time = time.time()
         assert self.__feature_extractor.is_training  # Assert untrained
 
-        # Extract features and pass them to liblinear.
-        [label_list, features_list] = \
-            self.__feature_extractor.extract_features(data_train)
+        # Extract features (only labeled instances) and pass them to liblinear.
+        [label_list, features_list, _] = \
+            self.__feature_extractor.extract_features(data_train, False)
         if not self.quiet:
             print("{0} labeled instances (out of {1})".format(
-                    data_train.num_labeled_instances, data_train.num_instances))
+                    len(label_list), data_train.num_instances))
             print("{0} label types".format(len(data_train.label_count)))
             print("{0} observation types".format(
                     len(data_train.observation_count)))
@@ -472,12 +600,133 @@ class Minitagger():
             num_seconds = int(math.ceil(time.time() - start_time))
             print("Training time: {0}".format(
                     str(datetime.timedelta(seconds=num_seconds))))
+            if data_dev is not None:
+                quiet_value = self.quiet
+                self.quiet = True
+                pred_labels, acc = self.predict(data_dev)
+                self.quiet = quiet_value
+                print("Dev accuracy: {0:.3f}%".format(acc))
+
+    def train_actively(self, data_train, data_dev):
+        """Do margin-based active learning on the given data."""
+
+        # We will assume that we can label every example.
+        assert not data_train.is_partially_labeled
+
+        # Keep track of which examples can be still selected for labeling.
+        __skip_extraction = []
+        for _, label_sequence in data_train.sequence_pairs:
+            __skip_extraction.append([False for _ in label_sequence])
+
+        # Create an output directory.
+        if os.path.exists(self.active_output_path):
+            subprocess.check_output(["rm", "-rf", self.active_output_path])
+        os.makedirs(self.active_output_path)
+        logfile = open(os.path.join(self.active_output_path, "log"), "w")
+
+        def __make_data_from_locations(locations):
+            """
+            Make SequenceData out of a subset of data_train from given
+            location=(sequence_num, position) pairs.
+            """
+            selected_positions = collections.defaultdict(list)
+            for (sequence_num, position) in locations:
+                selected_positions[sequence_num].append(position)
+
+            sequence_list = []
+            for sequence_num in selected_positions:
+                word_sequence, label_sequence = \
+                    data_train.sequence_pairs[sequence_num]
+                selected_labels = [None for _ in range(len(word_sequence))]
+                for position in selected_positions[sequence_num]:
+                    selected_labels[position] = label_sequence[position]
+
+                    # This example will not be selected again.
+                    __skip_extraction[sequence_num][position] = True
+                sequence_list.append((word_sequence, selected_labels))
+
+            selected_data = SequenceData(sequence_list)
+            return selected_data
+
+        def __train_silently(data_selected):
+            """Train in silent mode."""
+            self.__feature_extractor.is_training = True  # Reset for training.
+            quiet_value = self.quiet
+            self.quiet = True
+            self.train(data_selected, None)  # No need for development here.
+            self.quiet = quiet_value
+
+        # Compute the (active_seed_size) most frequent word types in data_train.
+        sorted_wordcount_pairs = sorted(data_train.observation_count.items(),
+                                        key=lambda type_count: type_count[1],
+                                        reverse=True)
+        seed_wordtypes = [wordtype for wordtype, _ in
+                          sorted_wordcount_pairs[:self.active_seed_size]]
+
+        # Select a random occurrence of each selected type for a seed example.
+        occurring_locations = collections.defaultdict(list)
+        for sequence_num, (observation_sequence, _) in \
+                enumerate(data_train.sequence_pairs):
+            for position, word in enumerate(observation_sequence):
+                if word in seed_wordtypes:
+                    occurring_locations[word].append((sequence_num, position))
+        locations = [random.sample(occurring_locations[wordtype], 1)[0] for
+                     wordtype in seed_wordtypes]
+        data_selected = __make_data_from_locations(locations)
+        __train_silently(data_selected)
+
+        while len(locations) < data_train.num_labeled_instances:
+            # Make predictions on the remaining (i.e., not on the skip list)
+            # labeled examples.
+            [label_list, features_list, location_list] = \
+                self.__feature_extractor.extract_features(\
+                data_train, False, __skip_extraction)
+            _, _, scores_list = \
+                liblinearutil.predict(label_list, features_list,
+                                      self.__liblinear_model, "-q")
+
+            # Compute "confidence" of each prediction:
+            #   max_{y} score(x,y) - max_{y'!=argmax_{y} score(x,y)} score(x,y')
+            confidence_index_pairs = []
+            for index, scores in enumerate(scores_list):
+                sorted_scores = sorted(scores, reverse=True)
+
+                # Handle the binary case: liblinear gives only 1 score whose sign
+                # indicates the class (+ versus -).
+                confidence = sorted_scores[0] - sorted_scores[1] \
+                    if len(scores) > 1 else abs(scores[0])
+                confidence_index_pairs.append((confidence, index))
+
+            # Select least confident examples for next labeling.
+            confidence_index_pairs.sort()
+            for _, index in confidence_index_pairs[:self.active_step_size]:
+                locations.append(location_list[index])
+            data_selected = __make_data_from_locations(locations)
+            num_labels = data_selected.num_labeled_instances
+            if num_labels % self.active_output_interval == 0:
+                # Test on the development data if we have it.
+                if data_dev is not None:
+                    quiet_value = self.quiet
+                    self.quiet = True
+                    pred_labels, acc = self.predict(data_dev)
+                    self.quiet = quiet_value
+                    message = "{0} labels: {1:.3f}%".format(num_labels, acc)
+                    print(message)
+                    logfile.write(message + "\n")
+
+                # Output the selected labeled examples so far.
+                file_name = os.path.join(self.active_output_path,
+                                         "example" + str(num_labels))
+                with open(file_name, "w") as outfile:
+                    outfile.write(data_selected.__str__())
+            __train_silently(data_selected)
+
+        logfile.close()
 
     def save(self, model_path):
-        if not os.path.isdir(model_path):
-            if os.path.exists(model_path):
-                subprocess.check_output(["rm", "-rf", model_path])
-            os.makedirs(model_path)
+        if os.path.exists(model_path):
+            subprocess.check_output(["rm", "-rf", model_path])
+        os.makedirs(model_path)
         pickle.dump(self.__feature_extractor,
                     open(os.path.join(model_path, "feature_extractor"), "wb"),
                     protocol=pickle.HIGHEST_PROTOCOL)
@@ -494,9 +743,10 @@ class Minitagger():
         start_time = time.time()
         assert not self.__feature_extractor.is_training  # Assert trained
 
-        # Extract features and pass them to liblinear for prediction.
-        [label_list, features_list] = \
-            self.__feature_extractor.extract_features(data_test)
+        # Extract features (on all instances, labeled or unlabeled) and pass
+        # them to liblinear for prediction.
+        [label_list, features_list, location_list] = \
+            self.__feature_extractor.extract_features(data_test, True)
         pred_labels, (acc, _, _), _ = \
             liblinearutil.predict(label_list, features_list,
                                   self.__liblinear_model, "-q")
@@ -504,47 +754,107 @@ class Minitagger():
             num_seconds = int(math.ceil(time.time() - start_time))
             print("Prediction time: {0}".format(
                     str(datetime.timedelta(seconds=num_seconds))))
-            print("Per-instance accuracy: {0:.3f}%".format(acc))
+            if not data_test.is_partially_labeled:
+                print("Per-instance accuracy: {0:.3f}%".format(acc))
+            else:
+                print("Not reporting accuracy: test data missing gold labels")
+
+        # Convert predicted labels from integer IDs to strings.
+        for i, label in enumerate(pred_labels):
+            pred_labels[i] = self.__feature_extractor.get_label_string(label)
         return pred_labels, acc
 
 ######################## script for command line usage  ########################
+ABSENT_GOLD_LABEL = "<NO_GOLD_LABEL>"  # Used for instances without gold labels.
+
 def main(args):
     """Runs the main function."""
+    if args.analyze:  # Only analyze the given data.
+        analyze_data(args.data_path)
+        return
+
     minitagger = Minitagger()
     minitagger.quiet = args.quiet
     sequence_data = SequenceData(args.data_path)  # Given data
 
     if args.train:
-        # Train on that data.
         feature_extractor = SequenceDataFeatureExtractor(args.feature_template)
         if args.embedding_path:
             feature_extractor.load_word_embeddings(args.embedding_path)
         if args.bitstring_path:
             feature_extractor.load_word_bitstrings(args.bitstring_path)
         minitagger.equip_feature_extractor(feature_extractor)
-        minitagger.train(sequence_data)
-        minitagger.save(args.model_path)
+        data_dev = SequenceData(args.dev_path) if args.dev_path else None
+        if data_dev is not None:  # Development data should be fully labeled.
+            assert not data_dev.is_partially_labeled
+        if not args.active:
+            assert args.model_path
+            minitagger.train(sequence_data, data_dev)
+            minitagger.save(args.model_path)
+        else:  # Do active learning on the training data
+            assert args.active_output_path
+            minitagger.active_output_path = args.active_output_path
+            minitagger.active_seed_size = args.active_seed_size
+            minitagger.active_step_size = args.active_step_size
+            minitagger.active_output_interval = args.active_output_interval
+            minitagger.train_actively(sequence_data, data_dev)
 
-    else:
-        # Predict tags in that data.
+    else:  # Predict tags of the observations in the given data.
+        assert args.model_path
         minitagger.load(args.model_path)
         pred_labels, acc = minitagger.predict(sequence_data)
+        if args.prediction_path:
+            with open(args.prediction_path, "w") as outfile:
+                label_index = 0
+                for sequence_num, (word_sequence, label_sequence) in \
+                        enumerate(sequence_data.sequence_pairs):
+                    for position, word in enumerate(word_sequence):
+                        if not label_sequence[position] is None:
+                            gold_label = label_sequence[position]
+                        else:
+                            gold_label = ABSENT_GOLD_LABEL
+                        outfile.write(word + "\t" + gold_label + "\t" + \
+                                          pred_labels[label_index] + "\n")
+                        label_index += 1
+                    if sequence_num < len(sequence_data.sequence_pairs) - 1:
+                        outfile.write("\n")
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
-    argparser.add_argument("model_path", type=str, help="path to model "
-                           "directory")
     argparser.add_argument("data_path", type=str, help="path to data (used for "
                            "training/testing)")
+    argparser.add_argument("--analyze", action="store_true", help="Analyze "
+                           "given data and return")
+    argparser.add_argument("--model_path", type=str, help="path to model "
+                           "directory")
+    argparser.add_argument("--prediction_path", type=str, help="path to output "
+                           "file of prediction")
     argparser.add_argument("--train", action="store_true", help="train the "
                            "tagger on the given data")
     argparser.add_argument("--feature_template",
                            type=str, default="baseline", help="feature template"
-                           " (default %(default)s)")
+                           " (default: %(default)s)")
     argparser.add_argument("--embedding_path", type=str, help="path to word "
                            "embeddings")
     argparser.add_argument("--bitstring_path", type=str, help="path to word "
                            "bit strings (from a hierarchy of word types)")
     argparser.add_argument("--quiet", action="store_true", help="no messages")
+    argparser.add_argument("--dev_path", type=str, help="path to development "
+                           "data (used for training)")
+    argparser.add_argument("--active", action="store_true", help="perform "
+                           "active learning on the given data")
+    argparser.add_argument("--active_output_path", type=str, help="path to "
+                           "output directory for active learning")
+    argparser.add_argument("--active_seed_size",
+                           type=int, default=1, help="number of seed examples "
+                           "for active learning (default: %(default)d)")
+    argparser.add_argument("--active_step_size",
+                           type=int, default=1, help="number of examples for "
+                           "labeling at each iteration in active learning "
+                           "(default: %(default)d)")
+    argparser.add_argument("--active_output_interval",
+                           type=int, default=100, help="output actively "
+                           "selected examples every time this value divides "
+                           "their number (default: %(default)d)")
     parsed_args = argparser.parse_args()
     main(parsed_args)
