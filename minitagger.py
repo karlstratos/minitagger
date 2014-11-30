@@ -15,9 +15,9 @@ import sys
 import time
 
 # Specify where to find liblinear.
-liblinear_path = os.path.join(os.path.dirname(__file__),
+LIBLINEAR_PATH = os.path.join(os.path.dirname(__file__),
                               "liblinear-1.96/python")
-sys.path.append(os.path.abspath(liblinear_path))
+sys.path.append(os.path.abspath(LIBLINEAR_PATH))
 import liblinearutil
 
 ############################# code about data ##################################
@@ -47,6 +47,7 @@ class SequenceData(object):
         self.__initialize_attributes()
 
     def get_average_length(self):
+        """Calculates the average length of the sequences."""
         length_sum = 0
         for observation_sequence, _ in self.sequence_pairs:
             length_sum += len(observation_sequence)
@@ -267,7 +268,7 @@ def is_float(word):
     try:
         float(word)
         return True
-    except:
+    except ValueError:
         return False
 
 # FEATURE_CACHE[(word, relative_position)] stores the features extracted for the
@@ -406,7 +407,7 @@ def get_bitstring_features(word_sequence, position, bitstring_dictionary):
 
     return features
 
-class SequenceDataFeatureExtractor():
+class SequenceDataFeatureExtractor(object):
     """Extracts features from sequence data."""
 
     def __init__(self, feature_template):
@@ -422,32 +423,37 @@ class SequenceDataFeatureExtractor():
         self.__word_bitstring = None
 
     def num_feature_types(self):
+        """Returns the number of distinct feature types."""
         return len(self.__map_feature_str2num)
 
     def get_feature_string(self, feature_number):
+        """Converts a numeric feature ID to a string."""
         assert feature_number in self.__map_feature_num2str
         return self.__map_feature_num2str[feature_number]
 
     def get_label_string(self, label_number):
+        """Converts a numeric label ID to a string."""
         assert label_number in self.__map_label_num2str
         return self.__map_label_num2str[label_number]
 
     def get_feature_number(self, feature_string):
+        """Converts a feature string to a numeric ID."""
         assert feature_string in self.__map_feature_str2num
         return self.__map_feature_str2num[feature_string]
 
     def get_label_number(self, label_string):
+        """Converts a label string to a numeric ID."""
         assert label_string in self.__map_label_str2num
         return self.__map_label_str2num[label_string]
 
-    def extract_features(self, sequence_data, extract_all, skip_list=[]):
+    def extract_features(self, sequence_data, extract_all, skip_list):
         """
         Extracts features from the given sequence data. Also returns the
         sequence-position indices of the extracted instances. Unless specified
         extract_all=True, it extracts features only from labeled instances.
 
-        Optional: It can skip extracting features from specified examples.
-        This is used for active learning.
+        It also skips extracting features from examples specified by skip_list.
+        This is used for active learning. (Pass [] to not skip any example.)
         """
         label_list = []
         features_list = []
@@ -497,11 +503,13 @@ class SequenceDataFeatureExtractor():
             raw_features = get_baseline_features(observation_sequence, position)
         elif self.feature_template == "embedding":
             assert self.__word_embedding is not None
-            raw_features = get_embedding_features(observation_sequence, position,
+            raw_features = get_embedding_features(observation_sequence,
+                                                  position,
                                                   self.__word_embedding)
         elif self.feature_template == "bitstring":
             assert self.__word_bitstring is not None
-            raw_features = get_bitstring_features(observation_sequence, position,
+            raw_features = get_bitstring_features(observation_sequence,
+                                                  position,
                                                   self.__word_bitstring)
         else:
             raise Exception("Unsupported feature template {0}".format(
@@ -527,11 +535,13 @@ class SequenceDataFeatureExtractor():
         return numeric_features
 
     def load_word_embeddings(self, embedding_path):
+        """Loads word embeddings from a file in the given path."""
         self.__word_embedding = {}
         with open(embedding_path, "r") as infile:
             for line in infile:
                 toks = line.split()
-                if len(toks) == 0: continue
+                if len(toks) == 0:
+                    continue
 
                 # toks = [count] [type] [value_1] ... [value_m]
                 self.__word_embedding[toks[1]] = \
@@ -544,12 +554,31 @@ class SequenceDataFeatureExtractor():
         # Assert that the token for unknown word types is present.
         assert UNKNOWN_SYMBOL in self.__word_embedding
 
+        # Address some treebank token conventions.
+        if "(" in self.__word_embedding:
+            self.__word_embedding["-LCB-"] = self.__word_embedding["("]
+            self.__word_embedding["-LRB-"] = self.__word_embedding["("]
+            self.__word_embedding["*LCB*"] = self.__word_embedding["("]
+            self.__word_embedding["*LRB*"] = self.__word_embedding["("]
+        if ")" in self.__word_embedding:
+            self.__word_embedding["-RCB-"] = self.__word_embedding[")"]
+            self.__word_embedding["-RRB-"] = self.__word_embedding[")"]
+            self.__word_embedding["*RCB*"] = self.__word_embedding[")"]
+            self.__word_embedding["*RRB*"] = self.__word_embedding[")"]
+        if "\"" in self.__word_embedding:
+            self.__word_embedding["``"] = self.__word_embedding["\""]
+            self.__word_embedding["''"] = self.__word_embedding["\""]
+            self.__word_embedding["`"] = self.__word_embedding["\""]
+            self.__word_embedding["'"] = self.__word_embedding["\""]
+
     def load_word_bitstrings(self, bitstring_path):
+        """Loads word bitstrings from a file in the given path."""
         self.__word_bitstring = {}
         with open(bitstring_path, "r") as infile:
             for line in infile:
                 toks = line.split()
-                if len(toks) == 0: continue
+                if len(toks) == 0:
+                    continue
 
                 # toks = [bitstring] [type] [count]
                 self.__word_bitstring[toks[1]] = toks[0]
@@ -557,8 +586,25 @@ class SequenceDataFeatureExtractor():
         # Assert that the token for unknown word types is present.
         assert UNKNOWN_SYMBOL in self.__word_bitstring
 
+        # Address some treebank token replacement conventions.
+        if "(" in self.__word_bitstring:
+            self.__word_bitstring["-LCB-"] = self.__word_bitstring["("]
+            self.__word_bitstring["-LRB-"] = self.__word_bitstring["("]
+            self.__word_bitstring["*LCB*"] = self.__word_bitstring["("]
+            self.__word_bitstring["*LRB*"] = self.__word_bitstring["("]
+        if ")" in self.__word_bitstring:
+            self.__word_bitstring["-RCB-"] = self.__word_bitstring[")"]
+            self.__word_bitstring["-RRB-"] = self.__word_bitstring[")"]
+            self.__word_bitstring["*RCB*"] = self.__word_bitstring[")"]
+            self.__word_bitstring["*RRB*"] = self.__word_bitstring[")"]
+        if "\"" in self.__word_bitstring:
+            self.__word_bitstring["``"] = self.__word_bitstring["\""]
+            self.__word_bitstring["''"] = self.__word_bitstring["\""]
+            self.__word_bitstring["`"] = self.__word_bitstring["\""]
+            self.__word_bitstring["'"] = self.__word_bitstring["\""]
+
 ############################# code about model  ################################
-class Minitagger():
+class Minitagger(object):
     """Main tagger model"""
 
     def __init__(self):
@@ -571,6 +617,7 @@ class Minitagger():
         self.active_output_interval = 0
 
     def equip_feature_extractor(self, feature_extractor):
+        """Equips Minitagger with a feature extractor."""
         self.__feature_extractor = feature_extractor
 
     def train(self, data_train, data_dev):
@@ -580,7 +627,7 @@ class Minitagger():
 
         # Extract features (only labeled instances) and pass them to liblinear.
         [label_list, features_list, _] = \
-            self.__feature_extractor.extract_features(data_train, False)
+            self.__feature_extractor.extract_features(data_train, False, [])
         if not self.quiet:
             print("{0} labeled instances (out of {1})".format(
                     len(label_list), data_train.num_instances))
@@ -603,12 +650,12 @@ class Minitagger():
             if data_dev is not None:
                 quiet_value = self.quiet
                 self.quiet = True
-                pred_labels, acc = self.predict(data_dev)
+                _, acc = self.predict(data_dev)
                 self.quiet = quiet_value
                 print("Dev accuracy: {0:.3f}%".format(acc))
 
     def train_actively(self, data_train, data_dev):
-        """Do margin-based active learning on the given data."""
+        """Does margin-based active learning on the given data."""
 
         # We will assume that we can label every example.
         assert not data_train.is_partially_labeled
@@ -626,7 +673,7 @@ class Minitagger():
 
         def __make_data_from_locations(locations):
             """
-            Make SequenceData out of a subset of data_train from given
+            Makes SequenceData out of a subset of data_train from given
             location=(sequence_num, position) pairs.
             """
             selected_positions = collections.defaultdict(list)
@@ -649,7 +696,7 @@ class Minitagger():
             return selected_data
 
         def __train_silently(data_selected):
-            """Train in silent mode."""
+            """Trains on the argument data in silent mode."""
             self.__feature_extractor.is_training = True  # Reset for training.
             quiet_value = self.quiet
             self.quiet = True
@@ -673,7 +720,7 @@ class Minitagger():
         locations = [random.sample(occurring_locations[wordtype], 1)[0] for
                      wordtype in seed_wordtypes]
         data_selected = __make_data_from_locations(locations)
-        __train_silently(data_selected)
+        __train_silently(data_selected)  # Train for the first time.
 
         while len(locations) < data_train.num_labeled_instances:
             # Make predictions on the remaining (i.e., not on the skip list)
@@ -681,6 +728,7 @@ class Minitagger():
             [label_list, features_list, location_list] = \
                 self.__feature_extractor.extract_features(\
                 data_train, False, __skip_extraction)
+
             _, _, scores_list = \
                 liblinearutil.predict(label_list, features_list,
                                       self.__liblinear_model, "-q")
@@ -691,8 +739,8 @@ class Minitagger():
             for index, scores in enumerate(scores_list):
                 sorted_scores = sorted(scores, reverse=True)
 
-                # Handle the binary case: liblinear gives only 1 score whose sign
-                # indicates the class (+ versus -).
+                # Handle the binary case: liblinear gives only 1 score whose
+                # sign indicates the class (+ versus -).
                 confidence = sorted_scores[0] - sorted_scores[1] \
                     if len(scores) > 1 else abs(scores[0])
                 confidence_index_pairs.append((confidence, index))
@@ -702,28 +750,33 @@ class Minitagger():
             for _, index in confidence_index_pairs[:self.active_step_size]:
                 locations.append(location_list[index])
             data_selected = __make_data_from_locations(locations)
-            num_labels = data_selected.num_labeled_instances
-            if num_labels % self.active_output_interval == 0:
+            __train_silently(data_selected)  # Train from scratch.
+
+            # Test and report at each interval.
+            if data_selected.num_labeled_instances % \
+                    self.active_output_interval == 0:
                 # Test on the development data if we have it.
                 if data_dev is not None:
                     quiet_value = self.quiet
                     self.quiet = True
-                    pred_labels, acc = self.predict(data_dev)
+                    _, acc = self.predict(data_dev)
                     self.quiet = quiet_value
-                    message = "{0} labels: {1:.3f}%".format(num_labels, acc)
+                    message = "{0} labels: {1:.3f}%".format(
+                        data_selected.num_labeled_instances, acc)
                     print(message)
                     logfile.write(message + "\n")
 
                 # Output the selected labeled examples so far.
-                file_name = os.path.join(self.active_output_path,
-                                         "example" + str(num_labels))
+                file_name = os.path.join(
+                    self.active_output_path,
+                    "example" + str(data_selected.num_labeled_instances))
                 with open(file_name, "w") as outfile:
                     outfile.write(data_selected.__str__())
-            __train_silently(data_selected)
 
         logfile.close()
 
     def save(self, model_path):
+        """Saves the model as a directory at the given path."""
         if os.path.exists(model_path):
             subprocess.check_output(["rm", "-rf", model_path])
         os.makedirs(model_path)
@@ -734,19 +787,24 @@ class Minitagger():
                                  self.__liblinear_model)
 
     def load(self, model_path):
+        """Loads the model from the directory at the given path."""
         self.__feature_extractor = pickle.load(
             open(os.path.join(model_path, "feature_extractor"), "rb"))
         self.__liblinear_model = liblinearutil.load_model(
             os.path.join(model_path, "liblinear_model"))
 
     def predict(self, data_test):
+        """
+        Predicts tags in the given data. If the data is fully labeled, reports
+        the accuracy.
+        """
         start_time = time.time()
         assert not self.__feature_extractor.is_training  # Assert trained
 
         # Extract features (on all instances, labeled or unlabeled) and pass
         # them to liblinear for prediction.
-        [label_list, features_list, location_list] = \
-            self.__feature_extractor.extract_features(data_test, True)
+        [label_list, features_list, _] = \
+            self.__feature_extractor.extract_features(data_test, True, [])
         pred_labels, (acc, _, _), _ = \
             liblinearutil.predict(label_list, features_list,
                                   self.__liblinear_model, "-q")
@@ -769,13 +827,17 @@ ABSENT_GOLD_LABEL = "<NO_GOLD_LABEL>"  # Used for instances without gold labels.
 
 def main(args):
     """Runs the main function."""
-    if args.analyze:  # Only analyze the given data.
+
+    # If specified, just analyze the given data and return. This data can be
+    # a prediction output file.
+    if args.analyze:
         analyze_data(args.data_path)
         return
 
+    # Otherwise, either train or use a tagger model on the given data.
     minitagger = Minitagger()
     minitagger.quiet = args.quiet
-    sequence_data = SequenceData(args.data_path)  # Given data
+    sequence_data = SequenceData(args.data_path)
 
     if args.train:
         feature_extractor = SequenceDataFeatureExtractor(args.feature_template)
@@ -799,10 +861,12 @@ def main(args):
             minitagger.active_output_interval = args.active_output_interval
             minitagger.train_actively(sequence_data, data_dev)
 
-    else:  # Predict tags of the observations in the given data.
+    else:  # Predict labels in the given data.
         assert args.model_path
         minitagger.load(args.model_path)
-        pred_labels, acc = minitagger.predict(sequence_data)
+        pred_labels, _ = minitagger.predict(sequence_data)
+
+        # Optional prediciton output.
         if args.prediction_path:
             with open(args.prediction_path, "w") as outfile:
                 label_index = 0
