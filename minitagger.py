@@ -703,6 +703,31 @@ class Minitagger(object):
             self.train(data_selected, None)  # No need for development here.
             self.quiet = quiet_value
 
+        def __interval_report(data_selected):
+            # Only report at each interval.
+            if data_selected.num_labeled_instances % \
+                    self.active_output_interval != 0:
+                return
+
+            # Test on the development data if we have it.
+            if data_dev is not None:
+                quiet_value = self.quiet
+                self.quiet = True
+                _, acc = self.predict(data_dev)
+                self.quiet = quiet_value
+                message = "{0} labels: {1:.3f}%".format(
+                    data_selected.num_labeled_instances, acc)
+                print(message)
+                logfile.write(message + "\n")
+                logfile.flush()
+
+            # Output the selected labeled examples so far.
+            file_name = os.path.join(
+                self.active_output_path,
+                "example" + str(data_selected.num_labeled_instances))
+            with open(file_name, "w") as outfile:
+                outfile.write(data_selected.__str__())
+
         # Compute the (active_seed_size) most frequent word types in data_train.
         sorted_wordcount_pairs = sorted(data_train.observation_count.items(),
                                         key=lambda type_count: type_count[1],
@@ -721,6 +746,7 @@ class Minitagger(object):
                      wordtype in seed_wordtypes]
         data_selected = __make_data_from_locations(locations)
         __train_silently(data_selected)  # Train for the first time.
+        __interval_report(data_selected)
 
         while len(locations) < data_train.num_labeled_instances:
             # Make predictions on the remaining (i.e., not on the skip list)
@@ -751,27 +777,7 @@ class Minitagger(object):
                 locations.append(location_list[index])
             data_selected = __make_data_from_locations(locations)
             __train_silently(data_selected)  # Train from scratch.
-
-            # Test and report at each interval.
-            if data_selected.num_labeled_instances % \
-                    self.active_output_interval == 0:
-                # Test on the development data if we have it.
-                if data_dev is not None:
-                    quiet_value = self.quiet
-                    self.quiet = True
-                    _, acc = self.predict(data_dev)
-                    self.quiet = quiet_value
-                    message = "{0} labels: {1:.3f}%".format(
-                        data_selected.num_labeled_instances, acc)
-                    print(message)
-                    logfile.write(message + "\n")
-
-                # Output the selected labeled examples so far.
-                file_name = os.path.join(
-                    self.active_output_path,
-                    "example" + str(data_selected.num_labeled_instances))
-                with open(file_name, "w") as outfile:
-                    outfile.write(data_selected.__str__())
+            __interval_report(data_selected)
 
         logfile.close()
 
