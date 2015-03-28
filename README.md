@@ -6,14 +6,18 @@ predictions based on *local* context. Even though this method is completely
 unstructured (as opposed to CRFs), with the addition of lexical representations
 it performs as well as structured models on certain problems like POS tagging.
 
+For experimental details, see: Simple Semi-Supervised POS Tagging (Stratos and
+Collins, 2015). You can obtain the word representations used in the experiments
+at: http://www.cs.columbia.edu/~stratos/research/wordrep.tar.gz.
+
 Highlights
 ----------
 Minitagger can:
 
 1. Utilize bit string (Brown clusters) and real-valued (word embeddings) lexical
 features.
- * These extra features must include a representation for unknown words,
-by default denoted by string "<?>".
+ * These lexical features must include a representation for unknown words.
+By default, symbol "<?>" denotes this representation.
 
 2. Train from partially or completely labeled data, of form (an empty line
 marks the end of a sentence):
@@ -24,7 +28,7 @@ marks the end of a sentence):
       	 the
       	 cat
 
-3. Perform active learning using whatever features it's equipped with.
+3. Perform *active learning* using whatever features it's equipped with.
 
 Usage
 --------
@@ -56,4 +60,5 @@ file):
 
 `python3 minitagger.py example/example.train --train --feature_template baseline --active --active_output_path /tmp/active.baseline.seed1.step1 --active_seed_size 1 --active_step_size 1 --active_output_interval 1`
 
-You can simply provide partially labeled sentences as training data.
+Once you have actively selected examples, you can simply provide these partially
+labeled sentences as training data to train a model.
